@@ -25,7 +25,7 @@ contract GasPriceFeesHook is BaseHook {
 
     // Initialize BaseHook parent contract in the constructor
     constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
-        // TODO
+        updateMovingAverage();
     }
 
     // Required override function for BaseHook to let the PoolManager know which hooks are implemented
@@ -76,8 +76,17 @@ contract GasPriceFeesHook is BaseHook {
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        // TODO
-        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        uint24 fee = getFee();
+        // If we wanted to generally update LP fee for a longer-term than per-swap
+        // poolManager.updateDynamicLPFee(key, fee);
+
+        // For overriding fee per swap:
+        uint24 feeWithFlag = fee | LPFeeLibrary.OVERRIDE_FEE_FLAG;
+        return (
+            this.beforeSwap.selector,
+            BeforeSwapDeltaLibrary.ZERO_DELTA,
+            feeWithFlag
+        );
     }
 
     function afterSwap(
@@ -89,5 +98,33 @@ contract GasPriceFeesHook is BaseHook {
     ) external override returns (bytes4, int128) {
         // TODO
         return (this.afterSwap.selector, 0);
+    }
+
+    // Update our moving average gas price
+    function updateMovingAverage() internal {
+        uint128 gasPrice = uint128(tx.gasprice);
+
+        // New Average = ((Old Average * # of Txns Tracked) + Current Gas Price) / (# of Txns Tracked + 1)
+        movingAverageGasPrice =
+            ((movingAverageGasPrice * movingAverageGasPriceCount) + gasPrice) /
+            (movingAverageGasPriceCount + 1);
+
+        movingAverageGasPriceCount++;
+    }
+
+    function getFee() internal view returns (uint24) {
+        uint128 gasPrice = uint128(tx.gasprice);
+
+        // if gasPrice > movingAverageGasPrice * 1.1, then half the fees
+        if (gasPrice > (movingAverageGasPrice * 11) / 10) {
+            return BASE_FEE / 2;
+        }
+
+        // if gasPrice < movingAverageGasPrice * 0.9, then double the fees
+        if (gasPrice < (movingAverageGasPrice * 9) / 10) {
+            return BASE_FEE * 2;
+        }
+
+        return BASE_FEE;
     }
 }
